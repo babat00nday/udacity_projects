@@ -1,4 +1,5 @@
 import random
+import itertools
 from environment import Agent, Environment
 from planner import RoutePlanner
 from simulator import Simulator
@@ -16,6 +17,9 @@ class LearningAgent(Agent):
     decay_exploration_rate = 0.00085    # epsilon decay
     learning_rate = 0.9                 # alpha
     discount_rate = 0.9                 # gamma
+    destination_reached_count = 0
+    destination_reached_percentage = 0.0
+    num_of_trials = 500
 
     def __init__(self, env):
         super(LearningAgent, self).__init__(env)  # sets self.env = env, state = None, next_waypoint = None, and a default color
@@ -23,11 +27,22 @@ class LearningAgent(Agent):
         self.planner = RoutePlanner(self.env, self)  # simple route planner to get next_waypoint
         
         # TODO: Initialize any additional variables here
-        num_of_states = 25  # 1 goal state plus (8 directional states * 3 traffic situation states) 24 informational states
-        num_of_actions = 4 # 4 actions per state {"none": 0, "left": 0, "forward": 0, "right": 0}
-        self.q_hat = [[0 for j in range(num_of_actions)] for i in range(num_of_states)]
+        
+        direction = ["Fo", "Fo/Ri", "Ri", "Ri/Ba", "Ba", "Ba/Le", "Le", "Fo/Le"]        # shortest direction to destination
+        traffic_light = ["RED", "GRN"]                                                  # traffic light at intersection
+        traffic_intersection = ["N", "O", "L", "R", "O/L", "O/R", "L/R", "O/L/R"]       # traffic situation with other cabs at intersection
+        
+        state_labels_combo = list(itertools.product(direction, traffic_light, traffic_intersection))
+        full_state_labels_combo = ["{}-{}-{}".format(a,b,c) for a, b, c in state_labels_combo]
+        full_state_labels_combo.append("GOAL")
+        self.q_hat = {x:[0, 0, 0, 0] for x in full_state_labels_combo}
+        self.policy = {x:-1 for x in full_state_labels_combo}
+        
+        #num_of_states = 25  # 1 goal state plus (8 directional states * 3 traffic situation states) 24 informational states
+        #num_of_actions = 4 # 4 actions per state {"none": 0, "left": 0, "forward": 0, "right": 0}
+        #self.q_hat = [[0 for j in range(num_of_actions)] for i in range(num_of_states)]
         #self.policy = [random.randint(0,3) for i in range(num_of_states)]
-        self.policy = [-1 for i in range(num_of_states)]
+        #self.policy = [-1 for i in range(num_of_states)]
         
         self.exploration_rate = self.max_exploration_rate
 
@@ -94,22 +109,18 @@ class LearningAgent(Agent):
             index_cab_view_local = index - 6
             if index_cab_view_local < 0:
                 index_cab_view_local = 8 + index_cab_view_local
-            #state_label = "-R-EW"
         elif heading[0] == 1 and heading[1] == 0:
             index_cab_view_local = index - 2
             if index_cab_view_local < 0:
                 index_cab_view_local = 8 + index_cab_view_local
-            #state_label = "-R-WE"
         elif heading[0] == 0 and heading[1] == 1:
             index_cab_view_local = index - 4
             if index_cab_view_local < 0:
                 index_cab_view_local = 8 + index_cab_view_local
-            #state_label = "-R-NS"
         elif heading[0] == 0 and heading[1] == -1:
             index_cab_view_local = index - 0
             if index_cab_view_local < 0:
                 index_cab_view_local = 8 + index_cab_view_local
-            #state_label = "-R-SN"
                     
         
         #print "LearningAgent.state_status(): up_dist = {}, down_dist = {}".format(up_dist, down_dist)  # [debug]
@@ -117,11 +128,16 @@ class LearningAgent(Agent):
         #print "LearningAgent.state_status(): vertical_dist = {}, horizontal_dist = {}".format(vertical_dist, horizontal_dist)  # [debug]
         #print "LearningAgent.state_status(): index = {}, index_cab_view_local = {}".format(index, index_cab_view_local)  # [debug]
         
+        
+        
+        #print "LearningAgent.state_status(): state_labels_combo = {}".format(state_labels_combo)  # [debug]
+        #print "LearningAgent.state_status(): full_state_labels_combo = {}".format(full_state_labels_combo)  # [debug]
+        #print "LearningAgent.state_status(): full_q_hat = {}".format(full_q_hat['Ri/Ba-RED-O'][0])  # [debug]
+        #print "LearningAgent.state_status(): traffic_intersection = {}".format(traffic_intersection)  # [debug]
+        
         state_label = ""
-        state_index = 0
         if index == -1:
-            state_index = 0
-            state_label = "-GOAL"
+            state_label = "GOAL"
         else:
             if index_cab_view_local == 0:
                 state_label = "Fo"              # Forward Only
@@ -140,19 +156,29 @@ class LearningAgent(Agent):
             elif index_cab_view_local == 7:
                 state_label = "Fo/Le"           # Forward and Left
                     
-            temp_state_index = (index_cab_view_local*3)
-            if inputs['light'] == 'red':                    # Cab is at a red traffic light
-                state_index = temp_state_index + 1
+            if inputs['light'] == 'red':
                 state_label = state_label + "-RED"
-            else:
-                if inputs['oncoming'] != None:              # Cab is at a green traffic light with oncoming vehicles in the opposite direction
-                    state_index = temp_state_index + 2
-                    state_label = state_label + "-GRE-O"
-                else:                                       # Cab is at a green traffic light with no oncoming vehicles
-                    state_index = temp_state_index + 3
-                    state_label = state_label + "-GRE-N"
+            elif inputs['light'] == 'green':
+                state_label = state_label + "-GRN"
+
+            if inputs['oncoming'] == None and inputs['left'] == None and inputs['right'] == None: 
+                state_label = state_label + "-N"
+            elif inputs['oncoming'] != None and inputs['left'] == None and inputs['right'] == None: 
+                state_label = state_label + "-O"
+            elif inputs['oncoming'] == None and inputs['left'] != None and inputs['right'] == None: 
+                state_label = state_label + "-L"
+            elif inputs['oncoming'] == None and inputs['left'] == None and inputs['right'] != None: 
+                state_label = state_label + "-R"
+            elif inputs['oncoming'] != None and inputs['left'] != None and inputs['right'] == None: 
+                state_label = state_label + "-O/L"
+            elif inputs['oncoming'] != None and inputs['left'] == None and inputs['right'] != None: 
+                state_label = state_label + "-O/R"
+            elif inputs['oncoming'] == None and inputs['left'] != None and inputs['right'] != None: 
+                state_label = state_label + "-L/R"
+            elif inputs['oncoming'] != None and inputs['left'] != None and inputs['right'] != None: 
+                state_label = state_label + "-O/L/R"
         
-        return state_index, state_label
+        return state_label
 
     def get_action_index(self, action):
         index = -1
@@ -190,23 +216,32 @@ class LearningAgent(Agent):
         deadline = self.env.get_deadline(self)
                 
         use_random_actions = False
+        self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
         
         if use_random_actions:
+            # observe our current state
+            state_label = self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
+            self.state = state_label
+            
             # select a random action
             action = random.choice([None, 'forward', 'left', 'right'])
             
             # determine reward for performing action in the current state
             reward = self.env.act(self, action)
             
-            print "LearningAgent.update(): deadline = {}, inputs = {}, action = {}, reward = {}".format(deadline, inputs, action, reward)  # [debug]
+            #print "LearningAgent.update(): deadline = {}, inputs = {}, action = {}, reward = {}".format(deadline, inputs, action, reward)  # [debug]
+            
+            
+            #if inputs['oncoming'] != None or inputs['left'] != None or inputs['right'] != None:
+                #self.sim.paused = True
+                #self.sim.pause()   
         else:
-            #while(true) {
             # observe our current state
-            state_index, state_label = self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
+            state_label = self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
             self.state = state_label
             
             # select action from policy
-            action_index = self.policy[state_index]
+            action_index = self.policy[self.state]
             
             # add random restarts [with a probability of 1-epsilon] to solve local optima issues similar to algorithm in simulated annealing
             self.exploration_rate = self.exploration_rate - (self.exploration_rate * self.decay_exploration_rate)
@@ -228,37 +263,32 @@ class LearningAgent(Agent):
                 #self.sim.pause()
                 
             action = self.get_action_label(action_index)
-            
-            # disable None action if light is green and there is no oncoming traffic
-            #if ("-GRE-N" in state_label) and (action == None):
-            #    action = random.choice(['left', 'forward', 'right'])
         
             # determine reward for performing action in the current state
             reward = self.env.act(self, action)
             
             # observe the next state that we will transition into based on the current state and action
-            next_state_index, next_state_label = self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
+            next_state_label = self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
             
             # select the maximum estimated Q value from the new state and all the possible actions
             max_q_hat = -1000000.
-            for i in range(4):
-                if self.q_hat[next_state_index][i] > max_q_hat:
-                    max_q_hat = self.q_hat[next_state_index][i]
+            for i in range(len(self.q_hat[self.state])):
+                if self.q_hat[next_state_label][i] > max_q_hat:
+                    max_q_hat = self.q_hat[next_state_label][i]
                     
             # update the estimate Q value for the current state and action based on the values of the next state and maximum Q value of possible actions
             new_q_hat = reward + (self.discount_rate * max_q_hat)
-            self.q_hat[state_index][action_index] = ((1-self.learning_rate) * self.q_hat[state_index][action_index]) + (self.learning_rate * new_q_hat)
-            #}
+            self.q_hat[self.state][action_index] = ((1-self.learning_rate) * self.q_hat[self.state][action_index]) + (self.learning_rate * new_q_hat)
             
             # TODO: Learn policy based on state, action, reward
             # update policy with action with max estimated Q value in this particular state
             max_q_hat = -1000000.
-            for i in range(len(self.q_hat[state_index])):
-                if self.q_hat[state_index][i] > max_q_hat:
-                    max_q_hat = self.q_hat[state_index][i]
-                    self.policy[state_index] = i
-                elif self.q_hat[state_index][i] == max_q_hat:
-                    self.policy[state_index] = random.choice([i, self.policy[state_index]])
+            for i in range(len(self.q_hat[self.state])):
+                if self.q_hat[self.state][i] > max_q_hat:
+                    max_q_hat = self.q_hat[self.state][i]
+                    self.policy[self.state] = i
+                elif self.q_hat[self.state][i] == max_q_hat:
+                    self.policy[self.state] = random.choice([i, self.policy[self.state]])
                     
                     
             printDebug = {
@@ -278,28 +308,34 @@ class LearningAgent(Agent):
                 print "LearningAgent.update(): deadline = {}, action = {}, reward = {}".format(deadline, action, reward)  # [debug]
             
             if printDebug["state"]:
-                print "LearningAgent.current_state(): state_index = {}, state_label = {}".format(state_index, state_label)  # [debug]
-                for i in range(len(self.q_hat[state_index])):
-                    print "LearningAgent.policy(): q_hat[curr_state_index][{}] = {}".format(i, self.q_hat[state_index][i])  # [debug]
+                print "LearningAgent.current_state(): state_label = {}".format(state_label)  # [debug]
+                for i in range(len(self.q_hat[self.state])):
+                    print "LearningAgent.policy(): q_hat[self.state][{}] = {}".format(i, self.q_hat[self.state][i])  # [debug]
                     
-                print "LearningAgent.next_state(): next_state_index = {}, next_state_label = {}".format(next_state_index, next_state_label)  # [debug]
-                for i in range(len(self.q_hat[next_state_index])):
-                    print "LearningAgent.policy(): q_hat[next_state_index][{}] = {}".format(i, self.q_hat[next_state_index][i])  # [debug]
+                print "LearningAgent.next_state(): next_state_label = {}".format(next_state_label)  # [debug]
+                for i in range(len(self.q_hat[next_state_label])):
+                    print "LearningAgent.policy(): q_hat[next_state_label][{}] = {}".format(i, self.q_hat[next_state_label][i])  # [debug]
                 
             if printDebug["policy"]:
-                for i in range(len(self.policy)):
-                    print "LearningAgent.policy(): policy[{}] = {}".format(i, self.policy[i])  # [debug]
+                for key, val in self.policy.iteritems():
+                    print "LearningAgent.policy(): policy[{}] = {}".format(key, val)  # [debug]
                     
             if printDebug["exploration"]:
                 for i in range(len(self.policy)):
                     print "LearningAgent.exploration(): exploration_rate = {}".format(self.exploration_rate)  # [debug]
         
+        # count number of times cab reached its destination
         # pause sim if cab reaches its destination
-        #location = self.env.agent_states[self]['location']
-        #destination = self.env.agent_states[self]['destination']
-        #if destination[0] == location[0] and destination[1] == location[1]:
+        location = self.env.agent_states[self]['location']
+        destination = self.env.agent_states[self]['destination']
+        if destination[0] == location[0] and destination[1] == location[1]:
+            self.destination_reached_count = self.destination_reached_count + 1
+            self.destination_reached_percentage = self.destination_reached_count * 1.0 / self.num_of_trials
             #self.sim.paused = True
             #self.sim.pause()
+            
+            print "LearningAgent.goal_count(): destination_reached_count = {}".format(self.destination_reached_count)  # [debug]
+            print "LearningAgent.goal_percentage(): destination_reached_count = {}".format(self.destination_reached_percentage)  # [debug]
             
         
         #self.sim.paused = True
@@ -316,12 +352,12 @@ def run():
     # NOTE: You can set enforce_deadline=False while debugging to allow longer trials
 
     # Now simulate it
-    sim = Simulator(e, update_delay=0.25, display=True)  # create simulator (uses pygame when display=True, if available)
+    sim = Simulator(e, update_delay=0.15, display=True)  # create simulator (uses pygame when display=True, if available)
     # NOTE: To speed up simulation, reduce update_delay and/or set display=False
     
     a.sim = sim
 
-    sim.run(n_trials=200)  # run for a specified number of trials
+    sim.run(n_trials=a.num_of_trials)  # run for a specified number of trials
     # NOTE: To quit midway, press Esc or close pygame window, or hit Ctrl+C on the command-line
     
 
