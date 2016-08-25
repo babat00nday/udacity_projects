@@ -10,6 +10,8 @@ class LearningAgent(Agent):
     sim = None
     q_hat = None
     policy = None
+    
+    useCustomDirection = False
         
     exploration_rate = 0.0              # epsilon
     max_exploration_rate = 0.8          # max epsilon
@@ -28,9 +30,11 @@ class LearningAgent(Agent):
         
         # TODO: Initialize any additional variables here
         
-        direction = ["Fo", "Fo/Ri", "Ri", "Ri/Ba", "Ba", "Ba/Le", "Le", "Fo/Le"]        # shortest direction to destination
-        traffic_light = ["RED", "GRN"]                                                  # traffic light at intersection
-        traffic_intersection = ["N", "O", "L", "R", "O/L", "O/R", "L/R", "O/L/R"]       # traffic situation with other cabs at intersection
+        direction_custom = ["Fo", "Fo/Ri", "Ri", "Ri/Ba", "Ba", "Ba/Le", "Le", "Fo/Le"]         # shortest direction to destination calculated using a custom function 
+        direction_waypoint = ["forward", "left", "right"]                                       # shortest direction to destination gotten as waypoint from planner
+        direction = direction_custom if self.useCustomDirection else direction_waypoint
+        traffic_light = ["RED", "GRN"]                                                          # traffic light at intersection
+        traffic_intersection = ["N", "O", "L", "R", "O/L", "O/R", "L/R", "O/L/R"]               # traffic situation with other cabs at intersection
         
         state_labels_combo = list(itertools.product(direction, traffic_light, traffic_intersection))
         full_state_labels_combo = ["{}-{}-{}".format(a,b,c) for a, b, c in state_labels_combo]
@@ -38,19 +42,13 @@ class LearningAgent(Agent):
         self.q_hat = {x:[0, 0, 0, 0] for x in full_state_labels_combo}
         self.policy = {x:-1 for x in full_state_labels_combo}
         
-        #num_of_states = 25  # 1 goal state plus (8 directional states * 3 traffic situation states) 24 informational states
-        #num_of_actions = 4 # 4 actions per state {"none": 0, "left": 0, "forward": 0, "right": 0}
-        #self.q_hat = [[0 for j in range(num_of_actions)] for i in range(num_of_states)]
-        #self.policy = [random.randint(0,3) for i in range(num_of_states)]
-        #self.policy = [-1 for i in range(num_of_states)]
-        
         self.exploration_rate = self.max_exploration_rate
 
     def reset(self, destination=None):
         self.planner.route_to(destination)
         # TODO: Prepare for a new trip; reset any variables here, if required
 
-    def get_state_status(self, inputs, agent_state):
+    def get_dir_to_destination(self, agent_state):
         location = agent_state['location']
         destination = agent_state['destination']
         heading = agent_state['heading']
@@ -121,41 +119,45 @@ class LearningAgent(Agent):
             index_cab_view_local = index - 0
             if index_cab_view_local < 0:
                 index_cab_view_local = 8 + index_cab_view_local
-                    
         
         #print "LearningAgent.state_status(): up_dist = {}, down_dist = {}".format(up_dist, down_dist)  # [debug]
         #print "LearningAgent.state_status(): right_dist = {}, left_dist = {}".format(right_dist, left_dist)  # [debug]
         #print "LearningAgent.state_status(): vertical_dist = {}, horizontal_dist = {}".format(vertical_dist, horizontal_dist)  # [debug]
         #print "LearningAgent.state_status(): index = {}, index_cab_view_local = {}".format(index, index_cab_view_local)  # [debug]
         
-        
-        
         #print "LearningAgent.state_status(): state_labels_combo = {}".format(state_labels_combo)  # [debug]
         #print "LearningAgent.state_status(): full_state_labels_combo = {}".format(full_state_labels_combo)  # [debug]
         #print "LearningAgent.state_status(): full_q_hat = {}".format(full_q_hat['Ri/Ba-RED-O'][0])  # [debug]
         #print "LearningAgent.state_status(): traffic_intersection = {}".format(traffic_intersection)  # [debug]
         
-        state_label = ""
-        if index == -1:
+        dir_to_destination = ""
+        
+        if index_cab_view_local == 0:
+            dir_to_destination = "Fo"              # Forward Only
+        elif index_cab_view_local == 1:
+            dir_to_destination = "Fo/Ri"           # Forward and Right
+        elif index_cab_view_local == 2:
+            dir_to_destination = "Ri"              # Right Only
+        elif index_cab_view_local == 3:
+            dir_to_destination = "Ri/Ba"           # Right and Back
+        elif index_cab_view_local == 4:
+            dir_to_destination = "Ba"              # Back Only
+        elif index_cab_view_local == 5:
+            dir_to_destination = "Ba/Le"           # Back and Left
+        elif index_cab_view_local == 6:
+            dir_to_destination = "Le"              # Left Only
+        elif index_cab_view_local == 7:
+            dir_to_destination = "Fo/Le"           # Forward and Left
+                
+        return dir_to_destination
+        
+    def get_state_status(self, inputs, agent_state):
+        state_label = self.get_dir_to_destination(agent_state) if self.useCustomDirection else self.planner.next_waypoint()
+        state_label = None if (state_label == "" or state_label == None) else state_label
+        
+        if state_label == None:
             state_label = "GOAL"
         else:
-            if index_cab_view_local == 0:
-                state_label = "Fo"              # Forward Only
-            elif index_cab_view_local == 1:
-                state_label = "Fo/Ri"           # Forward and Right
-            elif index_cab_view_local == 2:
-                state_label = "Ri"              # Right Only
-            elif index_cab_view_local == 3:
-                state_label = "Ri/Ba"           # Right and Back
-            elif index_cab_view_local == 4:
-                state_label = "Ba"              # Back Only
-            elif index_cab_view_local == 5:
-                state_label = "Ba/Le"           # Back and Left
-            elif index_cab_view_local == 6:
-                state_label = "Le"              # Left Only
-            elif index_cab_view_local == 7:
-                state_label = "Fo/Le"           # Forward and Left
-                    
             if inputs['light'] == 'red':
                 state_label = state_label + "-RED"
             elif inputs['light'] == 'green':
@@ -216,7 +218,7 @@ class LearningAgent(Agent):
         deadline = self.env.get_deadline(self)
                 
         use_random_actions = False
-        self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
+        #self.get_state_status(inputs=inputs, agent_state=self.env.agent_states[self])
         
         if use_random_actions:
             # observe our current state
@@ -306,6 +308,7 @@ class LearningAgent(Agent):
             if printDebug["update"]:
                 #print "LearningAgent.update(): deadline = {}, inputs = {}, action = {}, reward = {}".format(deadline, inputs, action, reward)  # [debug]
                 print "LearningAgent.update(): deadline = {}, action = {}, reward = {}".format(deadline, action, reward)  # [debug]
+                print "LearningAgent.update(): inputs = {}, next_waypoint = {}".format(inputs, self.next_waypoint)  # [debug]
             
             if printDebug["state"]:
                 print "LearningAgent.current_state(): state_label = {}".format(state_label)  # [debug]
@@ -352,7 +355,7 @@ def run():
     # NOTE: You can set enforce_deadline=False while debugging to allow longer trials
 
     # Now simulate it
-    sim = Simulator(e, update_delay=0.15, display=True)  # create simulator (uses pygame when display=True, if available)
+    sim = Simulator(e, update_delay=0.01, display=True)  # create simulator (uses pygame when display=True, if available)
     # NOTE: To speed up simulation, reduce update_delay and/or set display=False
     
     a.sim = sim
